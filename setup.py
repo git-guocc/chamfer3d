@@ -18,7 +18,7 @@ setup(
     author='guocc',
     description='Chamfer Distance CUDA implementation for PyTorch',
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/chamfer3d',
+    url='https://github.com/git-guocc/chamfer3d',
     packages=['chamfer3d'],
     ext_modules=[
         CUDAExtension(
