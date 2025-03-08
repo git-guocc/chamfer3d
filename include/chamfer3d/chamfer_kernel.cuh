@@ -49,7 +49,13 @@ int chamfer_backward(
     at::Tensor idx2
 );
 
-// 工具函数声明
+/**
+ * 检查张量的有效性
+ * 
+ * 对于名称中包含"idx"的张量，检查它是否为整数类型(Int或Long)
+ * 对于其他张量，检查它是否为浮点类型(Float)
+ * 所有张量都必须是连续的并且在CUDA设备上
+ */
 bool check_tensor(const at::Tensor& tensor, const std::string& name);
 
 } // namespace chamfer3d
