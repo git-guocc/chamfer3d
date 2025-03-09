@@ -270,7 +270,7 @@ int chamfer_backward(
     return 1;
 }
 
-// 混合精度前向传播实现
+// 半精度前向传播实现
 int chamfer_forward_mixed_precision(
     at::Tensor xyz1, 
     at::Tensor xyz2, 
@@ -281,7 +281,7 @@ int chamfer_forward_mixed_precision(
 ) {
     // 检查是否支持半精度计算
     if (!is_mixed_precision_supported()) {
-        printf("Mixed precision computation not supported on this device!\n");
+        printf("半精度计算在当前设备上不受支持!\n");
         return 0;
     }
     
@@ -346,7 +346,7 @@ int chamfer_forward_mixed_precision(
     return 1;
 }
 
-// 混合精度反向传播实现
+// 半精度反向传播实现
 int chamfer_backward_mixed_precision(
     at::Tensor xyz1, 
     at::Tensor xyz2, 
@@ -359,7 +359,7 @@ int chamfer_backward_mixed_precision(
 ) {
     // 检查是否支持半精度计算
     if (!is_mixed_precision_supported()) {
-        printf("Mixed precision computation not supported on this device!\n");
+        printf("半精度计算在当前设备上不受支持!\n");
         return 0;
     }
     

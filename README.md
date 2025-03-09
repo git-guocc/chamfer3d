@@ -1,11 +1,11 @@
 # Chamfer3D
 
-一个高效的CUDA加速的Chamfer距离计算实现，专为PyTorch设计。支持混合精度计算，并针对NVIDIA 40系列GPU进行了优化。
+一个高效的CUDA加速的Chamfer距离计算实现，专为PyTorch设计。支持半精度计算，并针对NVIDIA 40系列GPU进行了优化。
 
 ## 特性
 
 - CUDA加速实现
-- 支持混合精度计算（FP16/FP32）
+- 支持半精度计算（FP16/FP32）
 - 自动GPU架构检测
 - 针对最新NVIDIA GPU架构优化
 
@@ -35,7 +35,7 @@ dist1, dist2, idx1, idx2 = chamfer3d.forward(points1, points2)
 # 使用半精度计算（可选）
 points1_half = points1.half()
 points2_half = points2.half()
-dist1_half, dist2_half, idx1_half, idx2_half = chamfer3d.forward(points1_half, points2_half)
+dist1_half, dist2_half, idx1_half, idx2_half = chamfer3d.forward(points1_half, points2_half, use_half_precision=True)
 ```
 
 ## 要求

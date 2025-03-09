@@ -104,7 +104,7 @@ bool check_tensor(const at::Tensor& tensor, const std::string& name);
 
 /**
  * 检查是否支持半精度计算
- * 检查当前CUDA设备是否支持混合精度计算
+ * 检查当前CUDA设备是否支持半精度计算
  * 返回true如果支持，否则返回false
  */
 bool is_mixed_precision_supported();
