@@ -11,12 +11,6 @@
 
 ## 安装
 
-### 从PyPI安装
-
-```bash
-pip install chamfer3d
-```
-
 ### 从源码安装
 
 ```bash
