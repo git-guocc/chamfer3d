@@ -2,6 +2,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
+#include <cuda_fp16.h>
 #include "chamfer3d/chamfer_kernel.cuh"
 
 namespace chamfer3d {
@@ -193,6 +194,194 @@ __global__ void chamferDistanceGradKernel(
                 atomicAdd(&(grad_xyz2[(b * m + best_i) * 3 + 0]), -grad_vec.x);
                 atomicAdd(&(grad_xyz2[(b * m + best_i) * 3 + 1]), -grad_vec.y);
                 atomicAdd(&(grad_xyz2[(b * m + best_i) * 3 + 2]), -grad_vec.z);
+            }
+            block.sync();
+        }
+    }
+}
+
+// 半精度版本的前向计算内核 - 重写为兼容禁用半精度操作符的环境
+__global__ void chamferDistanceKernelHalf(
+    int batch_size,
+    int n,
+    const __half* xyz1,
+    int m,
+    const __half* xyz2,
+    __half* dist,
+    int* idx
+) {
+    namespace cg = cooperative_groups;
+    cg::thread_block block = cg::this_thread_block();
+    
+    const int batch = 512; 
+    __shared__ float buf_float[batch * 3];  // 使用float共享内存而不是half
+    
+    for (int b = blockIdx.x; b < batch_size; b += gridDim.x) {
+        // 分批次加载xyz2到共享内存
+        for (int k2 = 0; k2 < m; k2 += batch) {
+            int end_k = min(m, k2 + batch) - k2;
+            
+            // 加载数据到共享内存，但先转换为float类型
+            for (int j = threadIdx.x; j < end_k * 3; j += blockDim.x) {
+                if (j < end_k * 3) {
+                    buf_float[j] = __half2float(xyz2[(b * m + k2) * 3 + j]);
+                }
+            }
+            block.sync();
+            
+            // 处理每个点
+            for (int j = threadIdx.x + blockIdx.y * blockDim.x; j < n; j += blockDim.x * gridDim.y) {
+                // 加载点云1数据并转换为float
+                float fx1 = __half2float(xyz1[(b * n + j) * 3 + 0]);
+                float fy1 = __half2float(xyz1[(b * n + j) * 3 + 1]);
+                float fz1 = __half2float(xyz1[(b * n + j) * 3 + 2]);
+                
+                // 存储最佳距离和索引
+                float best = 1e20f;
+                int best_i = 0;
+                
+                // 批量处理点
+                int k = 0;
+                for (; k + 4 <= end_k; k += 4) {
+                    // 使用浮点计算以获得更高精度
+                    // 第1个点
+                    float fx2_1 = buf_float[k*3+0];
+                    float fy2_1 = buf_float[k*3+1];
+                    float fz2_1 = buf_float[k*3+2];
+                    float d1 = (fx1-fx2_1)*(fx1-fx2_1) + (fy1-fy2_1)*(fy1-fy2_1) + (fz1-fz2_1)*(fz1-fz2_1);
+                    
+                    // 第2个点
+                    float fx2_2 = buf_float[(k+1)*3+0];
+                    float fy2_2 = buf_float[(k+1)*3+1];
+                    float fz2_2 = buf_float[(k+1)*3+2];
+                    float d2 = (fx1-fx2_2)*(fx1-fx2_2) + (fy1-fy2_2)*(fy1-fy2_2) + (fz1-fz2_2)*(fz1-fz2_2);
+                    
+                    // 第3个点
+                    float fx2_3 = buf_float[(k+2)*3+0];
+                    float fy2_3 = buf_float[(k+2)*3+1];
+                    float fz2_3 = buf_float[(k+2)*3+2];
+                    float d3 = (fx1-fx2_3)*(fx1-fx2_3) + (fy1-fy2_3)*(fy1-fy2_3) + (fz1-fz2_3)*(fz1-fz2_3);
+                    
+                    // 第4个点
+                    float fx2_4 = buf_float[(k+3)*3+0];
+                    float fy2_4 = buf_float[(k+3)*3+1];
+                    float fz2_4 = buf_float[(k+3)*3+2];
+                    float d4 = (fx1-fx2_4)*(fx1-fx2_4) + (fy1-fy2_4)*(fy1-fy2_4) + (fz1-fz2_4)*(fz1-fz2_4);
+                    
+                    // 找出最小距离
+                    if (k == 0 && k2 == 0) {
+                        best = d1;
+                        best_i = k + k2;
+                    } else {
+                        if (d1 < best) { 
+                            best = d1; 
+                            best_i = k + k2; 
+                        }
+                    }
+                    
+                    if (d2 < best) { best = d2; best_i = k + k2 + 1; }
+                    if (d3 < best) { best = d3; best_i = k + k2 + 2; }
+                    if (d4 < best) { best = d4; best_i = k + k2 + 3; }
+                }
+                
+                // 处理剩余的点
+                for (; k < end_k; k++) {
+                    float fx2 = buf_float[k*3+0];
+                    float fy2 = buf_float[k*3+1];
+                    float fz2 = buf_float[k*3+2];
+                    float d = (fx1-fx2)*(fx1-fx2) + (fy1-fy2)*(fy1-fy2) + (fz1-fz2)*(fz1-fz2);
+                    
+                    if (k == 0 && k2 == 0) {
+                        best = d;
+                        best_i = k + k2;
+                    } else if (d < best) {
+                        best = d;
+                        best_i = k + k2;
+                    }
+                }
+                
+                // 存储结果，需要先获取当前值
+                float curr_dist = 0.0f;
+                if (k2 > 0) {
+                    curr_dist = __half2float(dist[b * n + j]);
+                }
+                
+                if (k2 == 0 || curr_dist > best) {
+                    dist[b * n + j] = __float2half(best);
+                    idx[b * n + j] = best_i;
+                }
+            }
+            block.sync();
+        }
+    }
+}
+
+// 重写半精度反向传播内核，以兼容禁用半精度运算符的环境
+__global__ void chamferDistanceGradKernelHalf(
+    int batch_size,
+    int n,
+    const __half* xyz1,
+    int m,
+    const __half* xyz2,
+    const __half* grad_dist,
+    const int* idx,
+    __half* grad_xyz1,
+    __half* grad_xyz2
+) {
+    namespace cg = cooperative_groups;
+    cg::thread_block block = cg::this_thread_block();
+    
+    // 使用共享内存
+    extern __shared__ float shared_mem[];
+    float* shared_grad = shared_mem;
+    int* shared_idx = (int*)&shared_grad[blockDim.x];
+    
+    const int tid = threadIdx.x;
+    
+    for (int b = blockIdx.x; b < batch_size; b += gridDim.x) {
+        for (int j_base = 0; j_base < n; j_base += blockDim.x) {
+            int j = j_base + tid;
+            
+            // 预加载数据到共享内存
+            if (j < n) {
+                shared_idx[tid] = idx[b * n + j];
+                shared_grad[tid] = __half2float(grad_dist[b * n + j]) * 2.0f;
+            }
+            block.sync();
+            
+            if (j < n) {
+                int best_i = shared_idx[tid];
+                float g = shared_grad[tid];
+                
+                // 加载坐标并转换为float
+                float p1[3], p2[3];
+                
+                p1[0] = __half2float(xyz1[(b * n + j) * 3 + 0]);
+                p1[1] = __half2float(xyz1[(b * n + j) * 3 + 1]);
+                p1[2] = __half2float(xyz1[(b * n + j) * 3 + 2]);
+                
+                p2[0] = __half2float(xyz2[(b * m + best_i) * 3 + 0]);
+                p2[1] = __half2float(xyz2[(b * m + best_i) * 3 + 1]);
+                p2[2] = __half2float(xyz2[(b * m + best_i) * 3 + 2]);
+                
+                // 计算梯度向量
+                float grad_vec[3];
+                grad_vec[0] = g * (p1[0] - p2[0]);
+                grad_vec[1] = g * (p1[1] - p2[1]);
+                grad_vec[2] = g * (p1[2] - p2[2]);
+                
+                // 使用临时变量更新梯度，避免半精度原子操作
+                for (int i = 0; i < 3; i++) {
+                    // 为xyz1更新梯度
+                    grad_xyz1[(b * n + j) * 3 + i] = __float2half(
+                        __half2float(grad_xyz1[(b * n + j) * 3 + i]) + grad_vec[i]
+                    );
+                    
+                    // 为xyz2更新梯度
+                    grad_xyz2[(b * m + best_i) * 3 + i] = __float2half(
+                        __half2float(grad_xyz2[(b * m + best_i) * 3 + i]) - grad_vec[i]
+                    );
+                }
             }
             block.sync();
         }

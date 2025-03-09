@@ -35,3 +35,10 @@ wheels/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Test and benchmark files
+tests/
+benchmark/
+examples/
+*.log
+*.prof
